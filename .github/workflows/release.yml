@@ -1,0 +1,125 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*' # Trigger on version tags (e.g., v1.0.0)
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        arch: [amd64, arm64]
+        exclude:
+          # GitHub-hosted Windows runners don't support ARM64 natively
+          - os: windows-latest
+            arch: arm64
+          
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24.1'
+          
+      - name: Setup additional architecture support for Linux
+        if: matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+      
+      - name: Build for macOS and Linux
+        if: matrix.os != 'windows-latest'
+        env:
+          GOOS: ${{ matrix.os == 'macos-latest' && 'darwin' || 'linux' }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 1
+          CC: ${{ matrix.arch == 'arm64' && matrix.os == 'ubuntu-latest' && 'aarch64-linux-gnu-gcc' || '' }}
+        run: |
+          mkdir -p dist
+          go build -o dist/HeaderTest-${{ env.GOOS }}-${{ matrix.arch }} ./cmd/HeaderTest
+      
+      - name: Build for Windows
+        if: matrix.os == 'windows-latest'
+        env:
+          GOOS: windows
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 1
+        run: |
+          mkdir -p dist
+          go build -o dist/HeaderTest-windows-${{ matrix.arch }}.exe ./cmd/HeaderTest
+      
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: HeaderTest-${{ matrix.os == 'macos-latest' && 'darwin' || matrix.os == 'ubuntu-latest' && 'linux' || 'windows' }}-${{ matrix.arch }}
+          path: |
+            dist/*
+  
+  # Special job for macOS ARM64 (Apple Silicon)
+  build-macos-arm64:
+    name: Build macOS-arm64 (Apple Silicon)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24.1'
+      
+      - name: Build for Apple Silicon
+        env:
+          GOOS: darwin
+          GOARCH: arm64
+          CGO_ENABLED: 1
+        run: |
+          mkdir -p dist
+          go build -o dist/HeaderTest-darwin-arm64 ./cmd/HeaderTest
+      
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: HeaderTest-darwin-arm64
+          path: |
+            dist/*
+
+  release:
+    name: Create Release
+    needs: [build, build-macos-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
+      
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+      
+      - name: Calculate checksums
+        run: |
+          mkdir -p release
+          find artifacts -type f -not -name "*.md5" -not -name "*.sha256" | while read file; do
+            cp "$file" release/
+            cd release
+            filename=$(basename "$file")
+            md5sum "$filename" > "${filename}.md5"
+            sha256sum "$filename" > "${filename}.sha256"
+            cd ..
+          done
+      
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
