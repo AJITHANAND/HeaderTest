@@ -1,0 +1,114 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*' # Trigger on version tags (e.g., v1.0.0)
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          # Linux builds
+          - os: ubuntu-latest
+            arch: amd64
+            goos: linux
+          - os: ubuntu-latest
+            arch: arm64
+            goos: linux
+          
+          # Windows build (amd64 only)
+          - os: windows-latest
+            arch: amd64
+            goos: windows
+          
+          # macOS builds
+          - os: macos-latest
+            arch: amd64
+            goos: darwin
+          - os: macos-latest
+            arch: arm64
+            goos: darwin
+          
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.1'
+          
+      - name: Setup additional architecture support for Linux
+        if: matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+      
+      - name: Build for macOS and Linux
+        if: matrix.os != 'windows-latest'
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 1
+          CC: ${{ matrix.arch == 'arm64' && matrix.os == 'ubuntu-latest' && 'aarch64-linux-gnu-gcc' || '' }}
+        run: |
+          mkdir -p dist
+          go build -o dist/HeaderTest-${{ matrix.goos }}-${{ matrix.arch }} ./cmd/HeaderTest
+      
+      - name: Build for Windows
+        if: matrix.os == 'windows-latest'
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 1
+        run: |
+          mkdir -p dist
+          go build -o dist/HeaderTest-${{ matrix.goos }}-${{ matrix.arch }}.exe ./cmd/HeaderTest
+      
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: HeaderTest-${{ matrix.goos }}-${{ matrix.arch }}
+          path: |
+            dist/*
+
+  release:
+    name: Create Release
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+      
+      - name: Calculate checksums
+        run: |
+          mkdir -p release
+          find artifacts -type f -not -name "*.md5" -not -name "*.sha256" | while read file; do
+            cp "$file" release/
+            cd release
+            filename=$(basename "$file")
+            md5sum "$filename" > "${filename}.md5"
+            sha256sum "$filename" > "${filename}.sha256"
+            cd ..
+          done
+      
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
