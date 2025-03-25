@@ -1,0 +1,14 @@
+{
+  "includeDirs":[
+    "test/project/include",
+    "test/project/include/common"
+  ],
+  "importedIncludeDirs":[
+    "test/project/third_party/include"
+  ],
+  "compiler":"clang",
+  "compilerArgs":[
+    "-std=c++17"
+  ],
+  "batchSize": 0
+}
