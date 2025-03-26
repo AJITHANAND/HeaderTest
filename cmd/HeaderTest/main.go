@@ -10,11 +10,13 @@ import (
 
 
 func main() {
-	fmt.Printf("Hello, world!\n")
+	configFile := flag.String("config", "config.json", "Path to the config file")
+	flag.Parse()
+	
 	var cfg config.Config
 
 	// parse the JSON file
-	err := helper.ParseJSONFile("config.json", &cfg)
+	err := helper.ParseJSONFile(*configFile, &cfg)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
