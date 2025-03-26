@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"github.com/ajithanand/HeaderTest/config"
+	"github.com/schollz/progressbar/v3"
 )
 
 func check(e error) {
@@ -170,4 +171,139 @@ func CompileHeadersWithWaitGroup(headers []string, compiler string, includeDirs 
 	}
 	WaitGroup.Wait()
 	return compileResults
+}
+
+func CompileHeaderFileWithProgress(headerFile string, compiler string, includeDirs []string, importedIncludeDirs []string, compilerArgs []string, bar *progressbar.ProgressBar) error {
+    if checkCompilerIsAvailable(compiler) == false {
+        bar.Clear()
+        fmt.Printf("Compiler %s is not available for %s\n", compiler, headerFile)
+        return fmt.Errorf("compiler not available")
+    }
+    
+    bar.Describe(fmt.Sprintf("Compiling %s", headerFile))
+
+    tempFile, err := os.CreateTemp("", "temp_*.cpp")
+    if err != nil {
+        bar.Clear()
+        fmt.Printf("Error creating temp file for %s: %v\n", headerFile, err)
+        return err
+    }
+    tempFilePath := tempFile.Name()
+    defer os.Remove(tempFilePath)
+
+    fmt.Fprintf(tempFile, "#include \"%s\"\n", headerFile)
+    tempFile.Close()
+    bar.Add(25) // 25% progress - temp file created
+    
+    args := []string{"-c", tempFilePath}
+    
+    includeFlags := compilerIncludePathFormat(includeDirs)
+    importedIncludeFlags := compilerIncludePathFormat(importedIncludeDirs)
+    
+    args = append(args, includeFlags...)
+    args = append(args, importedIncludeFlags...)
+    args = append(args, compilerArgs...)
+    bar.Add(25) // 50% progress - args prepared
+    
+    cmd := exec.Command(compiler, args...)
+    output, err := cmd.CombinedOutput()
+    if err != nil {
+        bar.Clear()
+        fmt.Printf("Compilation failed for %s: %v\n", headerFile, err)
+        return fmt.Errorf("compilation failed: %v\nOutput: %s", err, output)
+    }
+    bar.Add(25) // 75% progress - compilation complete
+    
+    objFile := strings.Split(tempFilePath,"/")[len(strings.Split(tempFilePath,"/"))-1]
+    objFile = strings.Split(objFile,".")[0] + ".o"
+    
+    err = os.Remove(objFile)
+    if err != nil {
+        bar.Clear()
+        fmt.Printf("Failed to delete object file for %s: %v\n", headerFile, err)
+        return fmt.Errorf("failed to delete object file: %v", err)
+    }
+    
+    bar.Add(25) // 100% progress - cleanup complete
+    bar.Finish()
+    return nil
+}
+
+func CompileHeadersWithWorkerPoolAndProgressBars(headers []string, compiler string, includeDirs []string, importedIncludeDirs []string, compilerArgs []string, numWorkers int) []config.CompileResult {
+    jobs := make(chan string, len(headers))
+    results := make(chan config.CompileResult, len(headers))
+    
+    // Create a map of progress bars for each header file
+    bars := make(map[string]*progressbar.ProgressBar)
+    for _, header := range headers {
+        bars[header] = progressbar.NewOptions(100,
+            progressbar.OptionSetDescription(fmt.Sprintf("Waiting to compile %s...", header)),
+            progressbar.OptionSetWidth(15),
+            progressbar.OptionShowCount(),
+        )
+    }
+    
+    // Start workers
+    for w := 1; w <= numWorkers; w++ {
+        go func() {
+            for headerFile := range jobs {
+                bar := bars[headerFile]
+                err := CompileHeaderFileWithProgress(headerFile, compiler, includeDirs, importedIncludeDirs, compilerArgs, bar)
+                results <- config.CompileResult{
+                    HeaderFile: headerFile, 
+                    Error: err,
+                }
+            }
+        }()
+    }
+    
+    // Send jobs
+    for _, header := range headers {
+        jobs <- header
+    }
+    close(jobs)
+    
+    // Collect all results
+    var compileResults []config.CompileResult
+    for i := 0; i < len(headers); i++ {
+        result := <-results
+        compileResults = append(compileResults, result)
+    }
+    
+    return compileResults
+}
+
+func CompileHeadersWithWaitGroupAndProgressBars(headers []string, compiler string, includeDirs []string, importedIncludeDirs []string, compilerArgs []string) []config.CompileResult {
+    var compileResults []config.CompileResult
+    var wg sync.WaitGroup
+    var mutex sync.Mutex
+    
+    // Create a progress bar for each header file
+    bars := make(map[string]*progressbar.ProgressBar)
+    for _, header := range headers {
+        bars[header] = progressbar.NewOptions(100,
+            progressbar.OptionSetDescription(fmt.Sprintf("Waiting to compile %s...", header)),
+            progressbar.OptionSetWidth(15),
+            progressbar.OptionShowCount(),
+        )
+    }
+    
+    for _, headerFile := range headers {
+        wg.Add(1)
+        go func(headerFile string) {
+            defer wg.Done()
+            bar := bars[headerFile]
+            err := CompileHeaderFileWithProgress(headerFile, compiler, includeDirs, importedIncludeDirs, compilerArgs, bar)
+            
+            mutex.Lock()
+            compileResults = append(compileResults, config.CompileResult{
+                HeaderFile: headerFile,
+                Error:      err,
+            })
+            mutex.Unlock()
+        }(headerFile)
+    }
+    
+    wg.Wait()
+    return compileResults
 }

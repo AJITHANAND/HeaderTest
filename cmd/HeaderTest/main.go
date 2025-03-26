@@ -5,6 +5,7 @@ import (
 	"os"
 	"github.com/ajithanand/HeaderTest/internal/helper"
 	"github.com/ajithanand/HeaderTest/config"
+	"flag"
 )
 
 
@@ -26,14 +27,29 @@ func main() {
 		headerFiles := helper.GetHeaderFilesInDir(Dir)
 		headerFilesArray = append(headerFilesArray, headerFiles...)
 	}
-	fmt.Printf("All Header Files: %v\n", headerFilesArray)
+	fmt.Printf("Found %d header files to compile\n", len(headerFilesArray))
 
+	// Use the progress bar versions of the compilation functions
 	var compileResults []config.CompileResult
 	if cfg.BatchSize == 0 {
-		compileResults = helper.CompileHeadersWithWaitGroup(headerFilesArray, cfg.Compiler, cfg.IncludeDirs, cfg.ImportedIncludeDirs, cfg.CompilerArgs)
-	}else{
-		compileResults = helper.CompileHeadersWithWorkerPool(headerFilesArray, cfg.Compiler, cfg.IncludeDirs, cfg.ImportedIncludeDirs, cfg.CompilerArgs, cfg.BatchSize)
+		compileResults = helper.CompileHeadersWithWaitGroupAndProgressBars(headerFilesArray, cfg.Compiler, cfg.IncludeDirs, cfg.ImportedIncludeDirs, cfg.CompilerArgs)
+	} else {
+		compileResults = helper.CompileHeadersWithWorkerPoolAndProgressBars(headerFilesArray, cfg.Compiler, cfg.IncludeDirs, cfg.ImportedIncludeDirs, cfg.CompilerArgs, cfg.BatchSize)
 	}
-	fmt.Println("Compile Results: ", compileResults)
-
+	
+	// Display a summary of compilation results
+	fmt.Println("\nCompilation Results Summary:")
+	errorCount := 0
+	for _, result := range compileResults {
+		if result.Error != nil {
+			fmt.Printf("❌ %s: %v\n", result.HeaderFile, result.Error)
+			errorCount++
+		} else {
+			fmt.Printf("✅ %s: compiled successfully\n", result.HeaderFile)
+		}
+	}
+	fmt.Printf("\nSummary: %d successful, %d failed\n", len(compileResults)-errorCount, errorCount)
+	if errorCount > 0 {
+		os.Exit(1)
+	}
 }
