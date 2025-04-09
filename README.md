@@ -1,5 +1,4 @@
 # HeaderTest
-
 HeaderTest is a Go-based utility designed to validate C/C++ header files by testing their compileability. It helps identify issues with header files such as missing includes, syntax errors, or dependency problems.
 
 ## Features
@@ -14,7 +13,8 @@ HeaderTest is a Go-based utility designed to validate C/C++ header files by test
 
 ### From Binary Releases
 
-Prebuilt binaries are available on the [GitHub Releases](https://github.com/ajithanand/HeaderTest/releases) page.
+Prebuilt binaries are available on the [GitHub Releases](https://github.com/ajithanand/HeaderTest/releases) page. [![Github All Releases](https://img.shields.io/github/downloads/AJITHANAND/HeaderTest/total.svg)]()
+
 
 ### From Source
 
