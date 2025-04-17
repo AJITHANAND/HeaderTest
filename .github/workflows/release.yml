@@ -4,37 +4,41 @@ on:
   push:
     tags:
       - 'v*' # Trigger on version tags (e.g., v1.0.0)
+  pull_request:
+    branches:
+      - main
+      - master
 
 permissions:
   contents: write
 
 jobs:
   build:
-    name: Build ${{ matrix.os }}-${{ matrix.arch }}
-    runs-on: ${{ matrix.os }}
+    name: Build ${{ matrix.goos }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
         include:
-          # Linux builds (to support glibc 2.31+)
-          - os: ubuntu-20.04
-            arch: amd64
+          # Linux → self-hosted runner (you must have this runner tagged appropriately)
+          - runner: self-hosted
             goos: linux
-          - os: ubuntu-20.04
+            arch: amd64
+          - runner: self-hosted
+            goos: linux
             arch: arm64
-            goos: linux
-          
-          # Windows build (amd64 only)
-          - os: windows-latest
-            arch: amd64
+
+          # Windows → GitHub‑hosted
+          - runner: windows-latest
             goos: windows
-          
-          # macOS builds
-          - os: macos-latest
             arch: amd64
+
+          # macOS → GitHub‑hosted
+          - runner: macos-latest
             goos: darwin
-          - os: macos-latest
+            arch: amd64
+          - runner: macos-latest
+            goos: darwin
             arch: arm64
-            goos: darwin
           
     steps:
       - name: Checkout code
@@ -46,24 +50,24 @@ jobs:
           go-version: '1.24.1'
           
       - name: Setup additional architecture support for Linux
-        if: matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64'
+        if: matrix.goos == 'linux' && matrix.arch == 'arm64'
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
       
       - name: Build for macOS and Linux
-        if: matrix.os != 'windows-latest'
+        if: matrix.goos != 'windows'
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 1
-          CC: ${{ matrix.arch == 'arm64' && matrix.os == 'ubuntu-latest' && 'aarch64-linux-gnu-gcc' || '' }}
+          CC: ${{ matrix.goos == 'linux' && matrix.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}
         run: |
           mkdir -p dist
           go build -o dist/HeaderTest-${{ matrix.goos }}-${{ matrix.arch }} ./cmd/HeaderTest
       
       - name: Build for Windows
-        if: matrix.os == 'windows-latest'
+        if: matrix.goos == 'windows'
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.arch }}
@@ -79,10 +83,37 @@ jobs:
           path: |
             dist/*
 
+  test:
+    name: Go Test
+    runs-on: ${{ matrix.runner }}
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    strategy:
+      matrix:
+        include:
+          - runner: self-hosted
+            goos: linux
+            arch: amd64
+          - runner: windows-latest
+            goos: windows
+            arch: amd64
+          - runner: macos-latest
+            goos: darwin
+            arch: amd64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.1'
+      - name: Run Go tests
+        run: go test ./...
+
   release:
     name: Create Release
     needs: [build]
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
